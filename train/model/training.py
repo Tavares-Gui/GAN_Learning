@@ -5,7 +5,7 @@ optimizers, utils, losses, initializers, metrics, callbacks, regularizers
 epochs = 500
 batch_size = 32
 patience = 10
-learning_rate = 0.02
+learning_rate = 0.002
 model_path = 'checkponts/model.keras'
 exists = os.path.exists(model_path)
 
