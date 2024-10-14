@@ -1,111 +1,115 @@
+from __future__ import print_function, division
+
 import os
+
+from tensorflow.keras.layers import BatchNormalization, LeakyReLU, Input, Dense, Reshape, Flatten, Activation, Dropout, UpSampling2D, Conv2D
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.optimizers import Adam
+
+import matplotlib.pyplot as plt
 import numpy as np
-import matplotlib.pyplot as plt 
-from tensorflow.keras import models, layers, optimizers, callbacks, utils
-from tensorflow.keras.models import Model
-from tensorflow.keras.preprocessing import image_dataset_from_directory
 
-epochs = 500
-batch_size = 32
-patience = 10
-learning_rate = 0.0002
-latent_dim = 100 
-img_shape = (256, 256, 3) 
-model_path = 'checkpoints/model_gan.keras'
-exists = os.path.exists(model_path)
+class GAN():
+    def __init__(self, img_shape):
+        self.img_rows = img_shape[0]
+        self.img_cols = img_shape[1]
+        self.channels = img_shape[2]
+        self.img_shape = (self.img_rows, self.img_cols, self.channels)
+        self.latent_dim = 100
 
-def build_generator():
-    model = models.Sequential()
-    model.add(layers.Dense(256, input_dim=latent_dim))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.BatchNormalization(momentum=0.8))
-    model.add(layers.Dense(512))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.BatchNormalization(momentum=0.8))
-    model.add(layers.Dense(1024))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.BatchNormalization(momentum=0.8))
-    model.add(layers.Dense(np.prod(img_shape), activation='tanh'))
-    model.add(layers.Reshape(img_shape))
+        optimizer = Adam(0.0002, 0.5)
 
-    return model
+        self.discriminator = self.build_discriminator()
+        self.discriminator.compile(loss='binary_crossentropy',
+                                   optimizer=optimizer,
+                                   metrics=['accuracy'])
 
-def build_discriminator():
-    model = models.Sequential()
-    model.add(layers.Flatten(input_shape=img_shape))
-    model.add(layers.Dense(512))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.Dense(256))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.Dense(1, activation='sigmoid'))
+        self.generator = self.build_generator()
 
-    return model
+        z = Input(shape=(self.latent_dim,))
+        img = self.generator(z)
+    
+        self.discriminator.trainable = False
+    
+        validity = self.discriminator(img)
 
-def load_data():
-    train_dataset = image_dataset_from_directory(
-        "dataset/archive/Birds_25/train",
-        image_size=(256, 256),
-        batch_size=batch_size,
-        label_mode=None 
-    )
-    train_dataset = train_dataset.map(lambda x: (x / 127.5) - 1.0) 
-    return train_dataset
+        self.combined = Model(z, validity)
+        self.combined.compile(loss='binary_crossentropy', optimizer=optimizer)
 
-generator = build_generator()
-discriminator = build_discriminator()
+    def build_generator(self):
+        model = Sequential()
+        model.add(Dense(256, input_dim=self.latent_dim))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Dense(512))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Dense(1024))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Dense(np.prod(self.img_shape), activation='tanh'))
+        model.add(Reshape(self.img_shape))
 
-if exists:
-    generator = models.load_model(model_path + '_generator')
-    discriminator = models.load_model(model_path + '_discriminator')
-    print("Modelos carregados.")
-else:
-    optimizer = optimizers.Adam(learning_rate=learning_rate, beta_1=0.5)
-    discriminator.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+        model.summary()
 
+        noise = Input(shape=(self.latent_dim,))
+        img = model(noise)
 
-    z = layers.Input(shape=(latent_dim,))
-    img = generator(z)
-    discriminator.trainable = False 
-    validity = discriminator(img)
+        return Model(noise, img)
 
-    combined = Model(z, validity)
-    combined.compile(loss='binary_crossentropy', optimizer=optimizer)
+    def build_discriminator(self):
+        model = Sequential()
+        model.add(Flatten(input_shape=self.img_shape))
+        model.add(Dense(512))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dense(256))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dense(1, activation='sigmoid'))
+        model.summary()
 
+        img = Input(shape=self.img_shape)
+        validity = model(img)
 
-    def train_gan(epochs, batch_size, sample_interval=200):
-        dataset = load_data()
+        return Model(img, validity)
 
+    def train(self, epochs, batch_size=32, sample_interval=50):
+        datagen = ImageDataGenerator(rescale=1./127.5, preprocessing_function=lambda x: x - 1.0)
+        train_generator = datagen.flow_from_directory(
+            'dataset/archive/Birds_25/train/',
+            target_size=(self.img_rows, self.img_cols),
+            batch_size=batch_size,
+            class_mode=None) 
+    
         valid = np.ones((batch_size, 1))
         fake = np.zeros((batch_size, 1))
 
         for epoch in range(epochs):
-            for real_imgs in dataset:
-            
-                noise = np.random.normal(0, 1, (batch_size, latent_dim))
-                gen_imgs = generator.predict(noise)
 
-                d_loss_real = discriminator.train_on_batch(real_imgs[:batch_size], valid)
-                d_loss_fake = discriminator.train_on_batch(gen_imgs, fake)
-                d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+            imgs = next(train_generator)
+            noise = np.random.normal(0, 1, (batch_size, self.latent_dim))
 
-            
-                noise = np.random.normal(0, 1, (batch_size, latent_dim))
-                g_loss = combined.train_on_batch(noise, valid)
+            gen_imgs = self.generator.predict(noise)
+        
+            d_loss_real = self.discriminator.train_on_batch(imgs, valid)
+            d_loss_fake = self.discriminator.train_on_batch(gen_imgs, fake)
+            d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
-                print(f"{epoch} [D loss: {d_loss[0]:.4f}, acc.: {100 * d_loss[1]:.2f}%] [G loss: {g_loss:.4f}]")
+            noise = np.random.normal(0, 1, (batch_size, self.latent_dim))
+        
+            g_loss = self.combined.train_on_batch(noise, valid)
+        
+            print("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100 * d_loss[1], g_loss))
+        
+            if epoch % sample_interval == 0:
+                self.sample_images(epoch)
 
-                if epoch % sample_interval == 0:
-                    sample_images(epoch)
-
-        generator.save(model_path + '_generator')
-        discriminator.save(model_path + '_discriminator')
-
-    def sample_images(epoch):
+    def sample_images(self, epoch):
         r, c = 5, 5
-        noise = np.random.normal(0, 1, (r * c, latent_dim))
-        gen_imgs = generator.predict(noise)
+        noise = np.random.normal(0, 1, (r * c, self.latent_dim))
+        gen_imgs = self.generator.predict(noise)
 
-        gen_imgs = 0.5 * gen_imgs + 0.5 
+        gen_imgs = 0.5 * gen_imgs + 0.5
 
         fig, axs = plt.subplots(r, c)
         cnt = 0
@@ -114,14 +118,10 @@ else:
                 axs[i, j].imshow(gen_imgs[cnt])
                 axs[i, j].axis('off')
                 cnt += 1
-        fig.savefig(f"images/epoch_{epoch}.png")
+        fig.savefig("images/%d.png" % epoch)
         plt.close()
 
-
-    train_gan(epochs=epochs, batch_size=batch_size)
-
-
-    callback_list = [
-        callbacks.EarlyStopping(monitor='val_loss', patience=patience, verbose=1),
-        callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, monitor='loss', mode='min', save_best_only=True)
-    ]
+if __name__ == '__main__':
+    img_shape = (64, 64, 3)
+    gan = GAN(img_shape=img_shape)
+    gan.train(epochs=30000, batch_size=32, sample_interval=200)
