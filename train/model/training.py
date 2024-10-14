@@ -1,14 +1,14 @@
-from __future__ import print_function, division
-
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import numpy as np
 import os
+
+from __future__ import print_function, division
 
 from tensorflow.keras.layers import BatchNormalization, LeakyReLU, Input, Dense, Reshape, Flatten, Activation, Dropout, UpSampling2D, Conv2D
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.optimizers import Adam
-
-import matplotlib.pyplot as plt
-import numpy as np
 
 class GAN():
     def __init__(self, img_shape):
